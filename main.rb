@@ -149,7 +149,7 @@ class Catalog
       file = {
         :size => size,
         :hash => img_list[img_size_list.index(size)],
-        :basename => File.basename(img_list[img_size_list.index(size)]).split('.')[0]
+        :basename => img_list[img_size_list.index(size)]
        }
     }
 
