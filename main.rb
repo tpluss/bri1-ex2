@@ -31,9 +31,6 @@ class Goods
 end
 
 
-#TODO
-# П. 1 задания
-
 # Каталог товаров: бёртка для записи в CSV-файл.
 #
 # Разделителем CSV-файла является знак \t.
@@ -71,6 +68,7 @@ class Catalog
       to_catalog(Goods.new(*row.take(5)), save_file=false)
     end
 
+    puts "Catalog stat:"
     self.stat
   end
 
@@ -108,6 +106,16 @@ class Catalog
     end
   end
 
+  def get_by_hash(hash)
+    # Поискать метод для перехода к строке - можно будет брать индекс из @saved.
+    return unless @saved.index(hash)
+    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.each do |line|
+      if line[5] == hash
+        return line
+      end
+    end
+  end
+
   def size
     @saved.size
   end
@@ -116,10 +124,10 @@ class Catalog
     puts "Catalog contains #{ self.size } goods."
 
     @catalog.each do |cat_url, cat_data|
-      puts "#{ cat_url }: #{ cat_data[:qnt] }."
+      puts "#{ cat_url }: #{ cat_data[:qnt] } pcs."
       cat_data[:subcat].each do |subcat_name, subcat_data|
-        puts "\t #{ subcat_name }: #{ subcat_data[:qnt] }; "\
-          "#{ 100 * subcat_data[:qnt]/cat_data[:qnt]% } "
+        puts " -> #{ subcat_name }: #{ subcat_data[:qnt] } pcs.; "\
+          "#{ 100 * subcat_data[:qnt]/cat_data[:qnt] }%."
       end
     end
 
@@ -127,7 +135,7 @@ class Catalog
 
     img_qnt = img_list.count
     if img_qnt == 0
-      puts "No images saved!"
+      puts "No images saved."
       return
     end
 
@@ -149,17 +157,17 @@ class Catalog
     m_file = img_file_info.call(img_size_list.max)
     # Проверки на nil нет - картинка должна быть учтена в каталоге.
     # В теории и это можно в Proc спрятать, но не усложняю.
-    min_f[:good] = self.get_by_hash(min_f[:basename])[2]
-    m_file[:good] = self.get_by_hash(m_file[:basename])[2]
+    min_f[:goods] = self.get_by_hash(min_f[:basename])
+    m_file[:goods] = self.get_by_hash(m_file[:basename])
 
     average = img_size_list.inject{|sum, el| sum += el}
 
     to_kb = Proc.new {|size| "#{ '%.2f' %(size.to_f/1024) }KB."}
 
     puts "Average: #{ to_kb.call(average.to_f/img_qnt) }"
-    puts "Min file #{ min_f[:hash] } for #{ min_f[:good] }: "\
+    puts "Min file #{ min_f[:hash] } for #{ min_f[:goods] }: "\
       "#{ to_kb.call(min_f[:size]) }"
-    puts "Max file #{ m_file[:hash] } for #{ m_file[:good] }: "\
+    puts "Max file #{ m_file[:hash] } for #{ m_file[:goods] }: "\
       "#{ to_kb.call(m_file[:size]) }"
   end
 end
@@ -253,15 +261,16 @@ class CatalogParser
 
     # У них на сайте не работает настройка вывода, но параметр нашёл: count.
     # Можно не делать переходы по страницам - все товары показаны сразу.
-    goods_a = get_by_xpath(@MAIN_URL + cat.keys[0] + '/?count=2', goods_link_xpath)
+    url = @MAIN_URL + cat.keys[0] + '/?count=2500'
+    goods_a = get_by_xpath(url, goods_link_xpath)
 
     goods_a.each do |goods|
       return if @parsed == @goods_qnt
-      parse_goods([txt, cat.values[0]], goods)
+      parse_goods(txt, cat.values[0], goods)
     end
   end
 
-  def parse_goods(bc, goods)
+  def parse_goods(cat, subcat, goods)
     href = goods.attributes['href'].value
     name = goods.at('img').attributes['alt'].value
 
@@ -269,7 +278,7 @@ class CatalogParser
     img_url = goods.attributes['style'].value.sub('background: url(', '')\
       .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
 
-    goods = Goods.new(bc[0], bc[1], href, name, img_url)
+    goods = Goods.new(cat, subcat, href, name, img_url)
     hash = @catalog.to_file(goods)
     @parsed +=1 if hash
 
