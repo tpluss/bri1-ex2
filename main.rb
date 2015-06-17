@@ -21,8 +21,7 @@ class Goods
   end
 
   def to_catalog
-    # santitize - подстраховка на случай табуляции в данных с сайта.
-    [@cat, @subcat, @href, @name, @img, @hash].map{|e| e.gsub('\t', ' ')}
+    [@cat, @subcat, @name, @href, @img, @hash]
   end
 
   def to_s
@@ -65,17 +64,23 @@ class Catalog
     @catalog = {}
     @catalog_file.readlines.each do |row|
       # Подсчёт хэша повторяется: добавить проверку источника?
-      to_catalog(Goods.new(*row.take(5)), save_file=false)
+      goods = Goods.new(*row.take(5))
+      self.add(goods, save_file=false)
     end
 
     puts "Catalog stat:"
     self.stat
   end
 
-  def to_catalog(goods, save_file=true)
+  def add(goods, save_file=true)
     cat = goods.cat
     subcat = goods.subcat
     hash = goods.hash
+
+    if @saved.index(hash)
+      puts "Already saved: #{ goods.name } (#{ hash })."
+      return
+    end
 
     unless @catalog.has_key?(cat)
       @catalog[cat] = {:txt => cat, :subcat => {}, :qnt => 0}
@@ -91,27 +96,24 @@ class Catalog
     @catalog[cat][:subcat][subcat][:qnt] += 1
 
     @saved.push(hash)
+
+    self.to_file(goods) if save_file
+
+    hash
   end
 
   def to_file(goods)
-    raise ArgumentError unless goods.is_a? Goods
-    if !@saved.index(goods.hash)
-      @catalog_file << goods.to_catalog
-
-      @catalog[goods.cat]
-
-      goods.hash
-    else
-      puts "#{ goods.name } (#{ goods.hash }) already saved."
-    end
+    @catalog_file << goods.to_catalog
   end
+  protected :to_file
 
-  def get_by_hash(hash)
+  def get_row_by_hash(hash)
     # Поискать метод для перехода к строке - можно будет брать индекс из @saved.
+    # Можно перейти на поиск по каталогу
     return unless @saved.index(hash)
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.each do |line|
-      if line[5] == hash
-        return line
+    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.each do |row|
+      if row[5] == hash
+        return row
       end
     end
   end
@@ -146,29 +148,30 @@ class Catalog
 
     # Структура для быстрого доступа к более востребованной информации о файле.
     img_file_info = Proc.new {|size|
+      f_path = img_list[img_size_list.index(size)]
       file = {
         :size => size,
-        :hash => img_list[img_size_list.index(size)],
-        :basename => img_list[img_size_list.index(size)]
+        :hash => File.basename(f_path).split('.')[0],
+        :name => File.basename(f_path)
        }
     }
 
     min_f = img_file_info.call(img_size_list.min)
-    m_file = img_file_info.call(img_size_list.max)
+    max_f = img_file_info.call(img_size_list.max)
     # Проверки на nil нет - картинка должна быть учтена в каталоге.
     # В теории и это можно в Proc спрятать, но не усложняю.
-    min_f[:goods] = self.get_by_hash(min_f[:basename])
-    m_file[:goods] = self.get_by_hash(m_file[:basename])
+    min_f[:goods] = self.get_row_by_hash(min_f[:hash])[2]
+    max_f[:goods] = self.get_row_by_hash(max_f[:hash])[2]
 
     average = img_size_list.inject{|sum, el| sum += el}
 
     to_kb = Proc.new {|size| "#{ '%.2f' %(size.to_f/1024) }KB."}
 
     puts "Average: #{ to_kb.call(average.to_f/img_qnt) }"
-    puts "Min file #{ min_f[:hash] } for #{ min_f[:goods] }: "\
+    puts "Min file #{ min_f[:name] } for #{ min_f[:goods] }: "\
       "#{ to_kb.call(min_f[:size]) }"
-    puts "Max file #{ m_file[:hash] } for #{ m_file[:goods] }: "\
-      "#{ to_kb.call(m_file[:size]) }"
+    puts "Max file #{ max_f[:name] } for #{ max_f[:goods] }: "\
+      "#{ to_kb.call(max_f[:size]) }"
   end
 end
 
@@ -181,7 +184,7 @@ class CatalogParser
 
     @ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '\
       '(KHTML, like Gecko) Chrome/43.0.2357.125 Safari/537.36'
-    @goods_qnt = 20
+    @goods_qnt = 2
     @parsed = 0
 
     @catalog = Catalog.new
@@ -278,14 +281,14 @@ class CatalogParser
     img_url = goods.attributes['style'].value.sub('background: url(', '')\
       .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
 
-    goods = Goods.new(cat, subcat, href, name, img_url)
-    hash = @catalog.to_file(goods)
+    goods_args = [cat, subcat, name, href, img_url].map{|e| e.gsub('\t', ' ')}
+    hash = @catalog.add(Goods.new(*goods_args))
     @parsed +=1 if hash
 
     # TODO: Не понимает русские символы
     if !img_url.empty? and hash
       begin
-        open("./img/#{ hash }.#{ File.extname(img_url) }", 'wb') do |file|
+        open("./img/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
           file << open(@MAIN_URL + img_url).read
         end
       rescue Exception => e
