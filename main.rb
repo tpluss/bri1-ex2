@@ -15,7 +15,7 @@ class Goods
   attr_reader :cat, :subcat, :name, :href, :img, :hash
 
   def initialize(*args)
-    raise ArgumentError unless args.size == 5
+    raise ArgumentError, "Expected args: cat, subcat, name, href, img." unless args.size == 5
     @cat, @subcat, @name, @href, @img = args
     @hash = Digest::SHA256.hexdigest(@cat + @subcat + @name)
   end
@@ -39,7 +39,7 @@ end
 # Хэш нужен для индикации наличия товара в Каталоге.
 class Catalog
 
-  attr_reader :path, :img_dir, :sep
+  attr_reader :path, :img_dir, :sep, :catalog
 
   def initialize(path=nil, img_dir=nil, sep=nil)
     @path ||= './catalog.txt'
@@ -78,7 +78,7 @@ class Catalog
     hash = goods.hash
 
     if @saved.index(hash)
-      puts "Already saved: #{ goods.name } (#{ hash })."
+      #puts "Already saved: #{ goods.name } (#{ hash })."
       return
     end
 
@@ -139,6 +139,8 @@ class Catalog
     if img_qnt == 0
       puts "No images saved."
       return
+    elsif self.size == 0
+      raise RuntimeError, "Remove all files from #{ @img_dir  } before run."
     end
 
     puts "#{ img_qnt } of #{ self.size } "\
@@ -148,11 +150,11 @@ class Catalog
 
     # Структура для быстрого доступа к более востребованной информации о файле.
     img_file_info = Proc.new {|size|
-      f_path = img_list[img_size_list.index(size)]
+      f_name = File.basename(img_list[img_size_list.index(size)])
       file = {
         :size => size,
-        :hash => File.basename(f_path).split('.')[0],
-        :name => File.basename(f_path)
+        :hash => f_name.split('.')[0],
+        :name => f_name
        }
     }
 
@@ -184,7 +186,7 @@ class CatalogParser
 
     @ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '\
       '(KHTML, like Gecko) Chrome/43.0.2357.125 Safari/537.36'
-    @goods_qnt = 2
+    @goods_qnt = 1000 
     @parsed = 0
 
     @catalog = Catalog.new
@@ -205,12 +207,27 @@ class CatalogParser
     rescue Exception => e
       puts "Couldn\'t create image folder. Exit."
       puts e.message
-      puts e.backtrace.inspect
       exit
     end
 
-    self.parse_main
-    self.parse_categories
+    self.parse_cat_links
+
+    while @parsed < @goods_qnt
+      self.parse_categories
+
+      @catalog.catalog.each do |cat_url, cat_data|
+        cat_data[:subcat].each do |subcat_name, subcat_data|
+          # У Пикника нет разделов, состоящих лишь из одного подраздела:
+          # если у раздела 100% в одном подразделе - добираем записи.
+          if subcat_data[:qnt] == cat_data[:qnt]
+            puts "There are only one category #{ subcat_name }. Continue."
+            @parsed = 0
+            break
+          end
+        end
+      end
+    end
+    @catalog.stat
   end
 
   # Сбор ссылок по заданному xpath для url
@@ -221,11 +238,10 @@ class CatalogParser
     rescue Exception => e
       puts "Couldn\'t connect to #{ url }."
       puts e.message
-      puts e.backtrace.inspect
     end
   end
 
-  def parse_main
+  def parse_cat_links
     section_xpath = '//div[@class="section"]'
     cat_xpath = './/a[@class="category-image"]'
     goods_xpath = './/p[@class="categories-wrap"]/span/a'
@@ -250,9 +266,12 @@ class CatalogParser
 
   def parse_categories
     @categories.values.each do |sect|
-      sect[:urls].each do |cat|
+      sect[:urls].each_with_index do |cat, i|
+        # Пока работа при доборе не продолжает с места последнего запуска.
         return if @parsed == @goods_qnt
+        continue if sect[:urls][i][cat.keys[0]] == '|'
         parse_category(cat, sect[:txt])
+        sect[:urls][i][cat.keys[0]] += '|'
       end
     end
   end
@@ -264,7 +283,7 @@ class CatalogParser
 
     # У них на сайте не работает настройка вывода, но параметр нашёл: count.
     # Можно не делать переходы по страницам - все товары показаны сразу.
-    url = @MAIN_URL + cat.keys[0] + '/?count=2500'
+    url = @MAIN_URL + cat.keys[0] + '?count=500'
     goods_a = get_by_xpath(url, goods_link_xpath)
 
     goods_a.each do |goods|
@@ -285,16 +304,15 @@ class CatalogParser
     hash = @catalog.add(Goods.new(*goods_args))
     @parsed +=1 if hash
 
-    # TODO: Не понимает русские символы
     if !img_url.empty? and hash
       begin
+        img_data = open(URI.encode(@MAIN_URL + img_url)).read
         open("./img/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
-          file << open(@MAIN_URL + img_url).read
+          file << img_data
         end
       rescue Exception => e
         puts "Couldn't save image file for #{ hash }"
         puts e.message
-        puts e.backtrace.inspect
       end
     end
   end
