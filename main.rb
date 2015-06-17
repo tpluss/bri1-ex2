@@ -30,7 +30,7 @@ class Goods
 end
 
 
-# Каталог товаров: бёртка для записи в CSV-файл.
+# Каталог товаров: обёртка для записи в CSV-файл.
 #
 # Разделителем CSV-файла является знак \t.
 # Формат каталога:
@@ -41,10 +41,21 @@ class Catalog
 
   attr_reader :path, :img_dir, :sep, :catalog
 
-  def initialize(path=nil, img_dir=nil, sep=nil)
+  def initialize(path=nil, sep=nil, img_dir=nil)
     @path ||= './catalog.txt'
-    @img_dir ||= './img'
     @sep ||= "\t"
+
+    @img_dir ||= './img'
+    begin
+      unless Dir.exists?(@img_dir)
+        Dir.mkdir(@img_dir)
+      end
+    rescue Exception => e
+      puts "Couldn\'t create image folder. Exit."
+      puts e.message
+      exit
+    end
+
     @catalog_file = CSV.open(@path, 'a+', {:col_sep => @sep})
 
     # Чтобы не дёргать каждый раз файл, создадим массив хэшей, который будет
@@ -183,13 +194,14 @@ end
 class CatalogParser
   def initialize
     @MAIN_URL = 'http://www.piknikvdom.ru'
-
     @ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '\
       '(KHTML, like Gecko) Chrome/43.0.2357.125 Safari/537.36'
+
     @goods_qnt = 10 
     @parsed = 0
 
     @catalog = Catalog.new
+    @img_dir = @catalog.img_dir
 
     # "/products/tights" => {
     #   :txt => "Колготки, носки",
@@ -199,16 +211,6 @@ class CatalogParser
     #   ]
     # }
     @categories = {}
-
-    begin
-      unless Dir.exists?('./img')
-        Dir.mkdir('./img')
-      end
-    rescue Exception => e
-      puts "Couldn\'t create image folder. Exit."
-      puts e.message
-      exit
-    end
 
     self.parse_cat_links
 
@@ -306,7 +308,7 @@ class CatalogParser
     if !img_url.empty? and hash
       begin
         img_data = open(URI.encode(@MAIN_URL + img_url)).read
-        open("./img/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
+        open("#{ img_dir }/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
           file << img_data
         end
       rescue Exception => e
