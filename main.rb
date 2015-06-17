@@ -129,7 +129,7 @@ class Catalog
       puts "#{ cat_url }: #{ cat_data[:qnt] } pcs."
       cat_data[:subcat].each do |subcat_name, subcat_data|
         puts " -> #{ subcat_name }: #{ subcat_data[:qnt] } pcs.; "\
-          "#{ 100 * subcat_data[:qnt]/cat_data[:qnt] }%."
+          "#{ '%.2f' %(100.to_f * subcat_data[:qnt]/cat_data[:qnt]) }%."
       end
     end
 
@@ -186,7 +186,7 @@ class CatalogParser
 
     @ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '\
       '(KHTML, like Gecko) Chrome/43.0.2357.125 Safari/537.36'
-    @goods_qnt = 1000 
+    @goods_qnt = 10 
     @parsed = 0
 
     @catalog = Catalog.new
@@ -266,12 +266,10 @@ class CatalogParser
 
   def parse_categories
     @categories.values.each do |sect|
-      sect[:urls].each_with_index do |cat, i|
-        # Пока работа при доборе не продолжает с места последнего запуска.
+      until sect[:urls].empty?
         return if @parsed == @goods_qnt
-        continue if sect[:urls][i][cat.keys[0]] == '|'
-        parse_category(cat, sect[:txt])
-        sect[:urls][i][cat.keys[0]] += '|'
+        # Работа при доборе не продолжает с места остановки.
+        parse_category(sect[:urls].shift, sect[:txt])
       end
     end
   end
@@ -304,6 +302,7 @@ class CatalogParser
     hash = @catalog.add(Goods.new(*goods_args))
     @parsed +=1 if hash
 
+    # FIX: Кириллица в url => 404.
     if !img_url.empty? and hash
       begin
         img_data = open(URI.encode(@MAIN_URL + img_url)).read
@@ -311,7 +310,7 @@ class CatalogParser
           file << img_data
         end
       rescue Exception => e
-        puts "Couldn't save image file for #{ hash }"
+        puts "Couldn't save image file from #{ img_url } for #{ hash }"
         puts e.message
       end
     end
