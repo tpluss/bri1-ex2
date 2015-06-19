@@ -3,125 +3,23 @@
 require 'csv'
 require 'digest'
 require 'open-uri'
-require 'nokogiri'
 require 'mechanize'
 
-
-# Товар
-# Описание состоит из:
-#   раздел - подраздел - название - адрес карточки - адрес картинки - хэш
-# Хэш генерируется в момент создания: SHA-256 из (раздел + подраздел + имя).
-class Goods
-
-  attr_reader :cat, :subcat, :name, :href, :img, :hash
-
-  def initialize(*args)
-    raise ArgumentError, "Expected args: cat, subcat, name, href, img." unless args.size == 5
-    @cat, @subcat, @name, @href, @img = args
-    @hash = Digest::SHA256.hexdigest(@cat + @subcat + @name)
-  end
-
-  def to_catalog
-    [@cat, @subcat, @name, @href, @img, @hash]
-  end
-
-  def to_s
-    "#{ @cat } > #{ @subcat } > #{ @name }: #{ @href }, #{ @img } (#{ @hash })"
-  end
-end
-
-
-# Каталог товаров: обёртка для записи в CSV-файл.
-#
-# Разделителем CSV-файла является знак \t.
-# Формат каталога:
-#   Категория | Ссылка на товар | Наименование | Ссылка на картинку | MD5-хэш
-#
-# Хэш нужен для индикации наличия товара в Каталоге.
 class Catalog
-
-  attr_reader :path, :img_dir, :sep, :catalog
-
-  def initialize(path=nil, sep=nil, img_dir=nil)
-    @path ||= './catalog.txt'
-    @sep ||= "\t"
-
-    @img_dir ||= './img'
-    unless Dir.exists?(@img_dir)
-      Dir.mkdir(@img_dir)
-    end
-
-    @catalog_file = CSV.open(@path, 'a+', {:col_sep => @sep})
-
-    # Чтобы не дёргать каждый раз файл, создадим массив хэшей, который будет
-    # индикатором наличия объекта в каталоге.
-    @saved = []
-
-    # Каталог хранится в структуре вида
-    # "Колготки, носки" => {
-    #   :subcat => {
-    #      "/products/tights/socks" => {
-    #       :goods => [GoodsItem],
-    #       :qnt => autoincrement,
-    #     }
-    #   },
-    #   :qnt => autoincrement
-    # }
-    @catalog = {}
-    @catalog_file.readlines.each do |row|
-      # Подсчёт хэша повторяется: добавить проверку источника?
-      goods = Goods.new(*row.take(5))
-      self.add(goods, save_file=false)
-    end
-
-    puts "Catalog stat:"
-    self.stat
-  end
-
-  def add(goods, save_file=true)
+  def add(goods)
     cat = goods.cat
     subcat = goods.subcat
     hash = goods.hash
 
-    if @saved.index(hash)
-      #puts "Already saved: #{ goods.name } (#{ hash })."
-      return
-    end
-
-    unless @catalog.has_key?(cat)
-      @catalog[cat] = {:txt => cat, :subcat => {}, :qnt => 0}
-    end
-
-    unless @catalog[cat][:subcat].has_key?(subcat)
-      @catalog[cat][:subcat][subcat] = {:goods => [], :qnt => 0} 
-    end
-
-    @catalog[cat][:subcat][subcat][:goods].push(goods)
-
-    @catalog[cat][:qnt] += 1
-    @catalog[cat][:subcat][subcat][:qnt] += 1
-
-    @saved.push(hash)
-
-    self.to_file(goods) if save_file
+    
 
     hash
   end
 
-  def to_file(goods)
-    @catalog_file << goods.to_catalog
-  end
-  protected :to_file
-
   def get_row_by_hash(hash)
     # Поискать метод для перехода к строке - можно будет брать индекс из @saved.
-    # Можно перейти на поиск по каталогу
     return unless @saved.index(hash)
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.each do |row|
-      if row[5] == hash
-        return row
-      end
-    end
+    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.select {|r| r[5] == hash}
   end
 
   def size
@@ -142,10 +40,7 @@ class Catalog
     img_list = Dir.glob(@img_dir + '/*.{jpg,jpeg,gif,png}') # с запасом
 
     img_qnt = img_list.count
-    if img_qnt == 0
-      puts "No images saved."
-      return
-    end
+    return if img_qnt == 0
 
     puts "#{ img_qnt } of #{ self.size } "\
       "(#{ 100 * img_qnt / self.size }%) goods have image."
@@ -184,122 +79,93 @@ end
 
 # Парсер каталога: собирает структуру в categories и последовательно обходит её,
 # обрабатывая разделы с товарами. Каждый товар отдаётся в Catalog для записи.
-class CatalogParser
-  def initialize
-    @MAIN_URL = 'http://www.piknikvdom.ru'
-    @ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '\
-      '(KHTML, like Gecko) Chrome/43.0.2357.125 Safari/537.36'
+# Каталог товаров: обёртка для записи в CSV-файл.
+#
+# Разделителем CSV-файла является знак \t.
+# Формат каталога:
+#   Раздел | Подраздел | Наименование | Адрес карточки | Адрес картинки | Хэш
+class PiknikParser
+
+  MAIN_URL = 'http://www.piknikvdom.ru'
+  PRODUCTS_URL = MAIN_URL + '/products'
+
+  SECTBLOCK_SEL = 'div.section'
+  SECTLINK_SEL = 'span.h3 > a.category-image'
+  SUBSECT_SEL = 'p.categories-wrap > span > a'
+
+  CSV_SEP = "\t"
+  CAT_PATH = './catalog.txt'
+  IMG_PATH  = './img'
+
+  def initialize(path=nil, sep=nil, img_dir=nil)
+    @path ||= CAT_PATH
+    @sep ||= CSV_SEP
+
+    @img_dir ||= IMG_PATH
+    unless Dir.exists?(@img_dir)
+      Dir.mkdir(@img_dir)
+    end
+
+    @catalog_file = CSV.open(@path, 'a+', {:col_sep => @sep})
+
+    # Чтобы не дёргать каждый раз файл, создадим массив хэшей, который будет
+    # индикатором наличия объекта в каталоге.
+    @saved = @catalog_file.readlines.select { |r| r[5] }
 
     @goods_qnt = 10 
     @parsed = 0
 
-    @catalog = Catalog.new
-    @img_dir = @catalog.img_dir
+    @mechanize = Mechanize.new
+    @mechanize.user_agent_alias = 'Windows Chrome'
+    catalog_page = @mechanize.get(PRODUCTS_URL)
+    catalog_page.search(SECTBLOCK_SEL).each do |sect_block|
+      section_link = sect_block.at(SECTLINK_SEL)
+      sect_href = section_link.attributes['href']
+      sect_title = section_link.attributes['title']
+      puts "#{ sect_href } -> #{ sect_title }"
 
-    # "/products/tights" => {
-    #   :txt => "Колготки, носки",
-    #   :urls => [
-    #     {"/products/tights/womens-tights" => "Колготки женские"},
-    #     {"/products/tights/socks" => "Носки мужские"}
-    #   ]
-    # }
-    @categories = {}
-
-    self.parse_cat_links
-
-    while @parsed < @goods_qnt
-      self.parse_categories
-
-      @catalog.catalog.each do |cat_url, cat_data|
-        cat_data[:subcat].each do |subcat_name, subcat_data|
-          # У Пикника нет разделов, состоящих лишь из одного подраздела:
-          # если у раздела 100% в одном подразделе - добираем записи.
-          if subcat_data[:qnt] == cat_data[:qnt]
-            puts "There are only one category #{ subcat_name }. Continue."
-            @parsed = 0
-            break
-          end
-        end
-      end
-    end
-    @catalog.stat
-  end
-
-  # Сбор ссылок по заданному xpath для url
-  def get_by_xpath(url, xpath)
-    data = Nokogiri::HTML(open(url, 'User-Agent' => @ua))
-    urls = data.xpath(xpath)
-  end
-
-  def parse_cat_links
-    section_xpath = '//div[@class="section"]'
-    cat_xpath = './/a[@class="category-image"]'
-    goods_xpath = './/p[@class="categories-wrap"]/span/a'
-
-    sections = get_by_xpath(@MAIN_URL + '/products', section_xpath)
-    sections.each do |sect|
-      cat_a = sect.xpath(cat_xpath).at('a')
-
-      cat_url = cat_a.attributes['href'].value.sub('#list', '')
-      @categories[cat_url] = {
-        :txt => cat_a.attributes['title'].value, :urls => []
-      }
-
-      goods = sect.xpath(goods_xpath)
-      goods.each do |_g|
-        @categories[cat_url][:urls].push(
-          {_g.attributes['href'].value.sub('#list', '') => _g.child.text}
-        )
+      sect_block.search(SUBSECT_SEL).each do |subsect_url|
+        status = self.parse_subsect(@mechanize.get(subsect_url.attributes['href']))
+        break if status == 'break'
       end
     end
   end
 
-  def parse_categories
-    @categories.values.each do |sect|
-      until sect[:urls].empty?
-        return if @parsed == @goods_qnt
-        # Работа при доборе не продолжает с места остановки.
-        parse_category(sect[:urls].shift, sect[:txt])
-      end
+  def parse_subsect(subsect_page)
+    subsect_page.search('a.product-image').each do |goods_link|
+      href = goods_link.attributes['href']
+      name = goods_link.at('img').attributes['alt']
+       # Зато без регэкспов :)
+      img_url = goods_link.attributes['style'].value.sub('background: url(', '')\
+        .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
+      puts "#{ name }"
+      # Создаём Goods и пишем в каталог
+      #goods_args = [cat, subcat, name, href, img_url].map{|e| e.gsub('\t', ' ')}
+      #hash = @catalog.add(Goods.new(*goods_args))
+      if @saved.index(hash)
+      return
     end
-  end
 
-  def parse_category(cat, txt)
-    # Наименование товара хранится так же в этом элементе, но нет ссылки на img.
-    #goods_link_xpath = '//div[@class="product-card-description"]/a'
-    goods_link_xpath = '//a[@class="product-image"]'
-
-    # У них на сайте не работает настройка вывода, но параметр нашёл: count.
-    # Можно не делать переходы по страницам - все товары показаны сразу.
-    url = @MAIN_URL + cat.keys[0] + '?count=500'
-    goods_a = get_by_xpath(url, goods_link_xpath)
-
-    goods_a.each do |goods|
-      return if @parsed == @goods_qnt
-      parse_goods(txt, cat.values[0], goods)
+    @catalog_file << goods.to_catalog
+      #if hash
+      #  # FIX: Кириллица в url => 404.
+      #  if !img_url.empty?
+      #    img_data = open(URI.encode(@MAIN_URL + img_url)).read
+      #    open("#{ @img_dir }/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
+      #      file << img_data
+      #    end
+      #  end
+      #
+      #  @parsed +=1
+      #  return 'break' unless @parsed < @goods_qnt
+      #end
     end
-  end
 
-  def parse_goods(cat, subcat, goods)
-    href = goods.attributes['href'].value
-    name = goods.at('img').attributes['alt'].value
-
-    # Зато без регэкспов :)
-    img_url = goods.attributes['style'].value.sub('background: url(', '')\
-      .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
-
-    goods_args = [cat, subcat, name, href, img_url].map{|e| e.gsub('\t', ' ')}
-    hash = @catalog.add(Goods.new(*goods_args))
-    @parsed +=1 if hash
-
-    # FIX: Кириллица в url => 404.
-    if !img_url.empty? and hash
-      img_data = open(URI.encode(@MAIN_URL + img_url)).read
-      open("#{ @img_dir }/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
-        file << img_data
-      end
+    if subsect_page.at('a.pager-next')
+      puts "Go to page #{ subsect_page.at('a.pager-next').attributes['href'] }"
+      parse_subsect(@mechanize.get(subsect_page.at('a.pager-next').attributes['href']))
     end
   end
 end
 
-cp = CatalogParser.new
+cp = PiknikParser.new
