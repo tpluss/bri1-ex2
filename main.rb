@@ -4,6 +4,7 @@ require 'csv'
 require 'digest'
 require 'open-uri'
 require 'nokogiri'
+require 'mechanize'
 
 
 # Товар
@@ -46,14 +47,8 @@ class Catalog
     @sep ||= "\t"
 
     @img_dir ||= './img'
-    begin
-      unless Dir.exists?(@img_dir)
-        Dir.mkdir(@img_dir)
-      end
-    rescue Exception => e
-      puts "Couldn\'t create image folder. Exit."
-      puts e.message
-      exit
+    unless Dir.exists?(@img_dir)
+      Dir.mkdir(@img_dir)
     end
 
     @catalog_file = CSV.open(@path, 'a+', {:col_sep => @sep})
@@ -150,8 +145,6 @@ class Catalog
     if img_qnt == 0
       puts "No images saved."
       return
-    elsif self.size == 0
-      raise RuntimeError, "Remove all files from #{ @img_dir  } before run."
     end
 
     puts "#{ img_qnt } of #{ self.size } "\
@@ -234,13 +227,8 @@ class CatalogParser
 
   # Сбор ссылок по заданному xpath для url
   def get_by_xpath(url, xpath)
-    begin
-      data = Nokogiri::HTML(open(url, 'User-Agent' => @ua))
-      urls = data.xpath(xpath)
-    rescue Exception => e
-      puts "Couldn\'t connect to #{ url }."
-      puts e.message
-    end
+    data = Nokogiri::HTML(open(url, 'User-Agent' => @ua))
+    urls = data.xpath(xpath)
   end
 
   def parse_cat_links
@@ -306,14 +294,9 @@ class CatalogParser
 
     # FIX: Кириллица в url => 404.
     if !img_url.empty? and hash
-      begin
-        img_data = open(URI.encode(@MAIN_URL + img_url)).read
-        open("#{ img_dir }/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
-          file << img_data
-        end
-      rescue Exception => e
-        puts "Couldn't save image file from #{ img_url } for #{ hash }"
-        puts e.message
+      img_data = open(URI.encode(@MAIN_URL + img_url)).read
+      open("#{ @img_dir }/#{ hash }#{ File.extname(img_url) }", 'wb') do |file|
+        file << img_data
       end
     end
   end
