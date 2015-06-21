@@ -98,7 +98,10 @@ class PiknikParser
     puts "Catalog contains #{ @saved.size } goods."
     return if @saved.size.zero?
 
-    data = CSV.open(@path, 'r', {:col_sep => @sep}).readlines
+    csv = CSV.open(@path, 'r', {:col_sep => @sep})
+    data = csv.readlines
+    csv.close
+
     catalog = Hash[data.collect{|r| [r[0], {:qnt => 0}]}]
     data.each do |r|
       catalog[r[0]][r[1]] = [] unless catalog[r[0]][r[1]]
