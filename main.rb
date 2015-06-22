@@ -50,6 +50,9 @@ class PiknikParser
   def parse
     @mechanize = Mechanize.new
     @mechanize.user_agent_alias = 'Windows Chrome'
+
+    img_saver = Mechanize.new # Отдельный инстанс нужен: segafult в nokogiri.so
+
     catalog_page = @mechanize.get(PRODUCTS_URL)
     catalog_page.search(SECTBLOCK_SEL).each do |sect_block|
       sect_title = sect_block.at(SECTLINK_SEL).attributes['title'].to_s
@@ -69,10 +72,10 @@ class PiknikParser
           next if @saved.index(hash)         
 
           unless goods.attributes['style'].to_s.index('no_photo')
-            goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'])
+            goods_card = img_saver.get(MAIN_URL + goods.attributes['href'])
             img_url = goods_card.at(GOODSIMG_SEL).attributes['href'].to_s
             img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
-            @mechanize.get(MAIN_URL + img_url).save(img_path)
+            img_saver.get(MAIN_URL + img_url).save(img_path)
           end
 
           @catalog_file << [sect_title, subsect_title, name, href, img_url, hash]
