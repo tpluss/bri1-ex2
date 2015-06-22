@@ -39,7 +39,7 @@ class PiknikParser
     # индикатором наличия объекта в каталоге.
     @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    @goods_qnt = 50
+    @goods_qnt = 3
     #return    
     @parsed = 0
 
@@ -48,38 +48,34 @@ class PiknikParser
     catalog_page = @mechanize.get(PRODUCTS_URL)
     catalog_page.search(SECTBLOCK_SEL).each do |sect_block|
       sect_title = sect_block.at(SECTLINK_SEL).attributes['title'].to_s
-      #puts "Works on #{ sect_title }"
+      puts "Works on #{ sect_title }"
 
       sect_block.search(SUBSECT_SEL).each do |subsect_url|
-        #puts "  Parse #{ subsect_url.text }"
+        puts "  Parse #{ subsect_url.text }"
         href = subsect_url.attributes['href']
-        # Хорошо бы переделать на итератор, типа yield в питоне, который бы брал
-        # по товару, если не достиг лимита. Тогда бы это позволило забирать сюда
-        # данные по товару, не передавать sect, subsect и сохранять прямо здесь.
         return if self.parse_subsect(@mechanize.get(href), sect_title, subsect_url.text) == 'break'
       end
     end
-
-    self.stat
   end
 
   def parse_subsect(subsect_page, sect, subsect)
     subsect_page.search(GOODSCARD_SEL).each do |goods_link|
       href = goods_link.attributes['href'].to_s
       name = goods_link.at('img').attributes['alt'].to_s
-      # FIX: переход в карточку товара с последующим дёрганьем по css-селектору.
-      img_url = goods_link.attributes['style'].value.sub('background: url(', '')\
-        .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
 
       hash = Digest::SHA256.hexdigest(sect + subsect + name)
       next if @saved.index(hash)
-      @catalog_file << [sect, subsect, name, href, img_url, hash]
-      #puts "    #{ name }"
 
-      unless img_url.empty?
+      img_url = ''
+      unless goods_link.attributes['style'].to_s.index('no_photo')
+        goods_card = @mechanize.get(MAIN_URL + goods_link.attributes['href'].to_s)
+        img_url = goods_card.at('div.prettyphoto').attributes['href'].to_s
         img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
         @mechanize.get(MAIN_URL + img_url).save(img_path)
       end
+
+      @catalog_file << [sect, subsect, name, href, img_url, hash]
+      #puts "    #{ name }"
 
       @parsed += 1
       @saved.push(hash)
@@ -88,8 +84,8 @@ class PiknikParser
 
     next_link = subsect_page.at(NEXTPAGE_SEL)
     if next_link
-      #puts "Go to page #{ next_link.attributes['href'] }"
-      parse_subsect(@mechanize.get(MAIN_URL + '/' + next_link.attributes['href']), sect, subsect)
+      puts "  Next page #{ MAIN_URL + next_link.attributes['href'] }"
+      parse_subsect(@mechanize.get(MAIN_URL + next_link.attributes['href']), sect, subsect)
     end
   end
 
@@ -101,7 +97,7 @@ class PiknikParser
   def stat
     puts "Catalog contains #{ @saved.size } goods."
     return if @saved.size.zero?
-    
+
     # FIX: разобраться с открытием файлов: файл конец файла не совпадает:
     # приходится вручную закрывать файл для записи
     @catalog_file.close
