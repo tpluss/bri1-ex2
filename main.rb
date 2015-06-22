@@ -40,7 +40,7 @@ class PiknikParser
     # индикатором наличия объекта в каталоге.
     @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    @goods_qnt = 50
+    @goods_qnt = 1000
     @parsed = 0
 
     self.parse
@@ -56,14 +56,17 @@ class PiknikParser
       puts "Works on #{ sect_title }"
 
       sect_block.search(SUBSECT_SEL).each do |subsect_url|
-        puts "  Parse #{ subsect_url.text }"
+        subsect_title = subsect_url.text
+        puts "  Parse #{ subsect_title }"
 
         subsect_goods = self.get_subsect_goods(subsect_url.attributes['href'])
+        puts subsect_goods
         subsect_goods.each do |goods|
           return if @parsed == @goods_qnt
 
+          puts "Parse #{ goods }"
           href, name, img_url = self.parse_goods(goods)
-          hash = Digest::SHA256.hexdigest(sect_title + subsect_url.text + name)
+          hash = Digest::SHA256.hexdigest(sect_title + subsect_title + name)
           next if @saved.index(hash)
 
           if img_url
@@ -71,8 +74,8 @@ class PiknikParser
             @mechanize.get(MAIN_URL + img_url).save(img_path)
           end
 
-          @catalog_file << [sect_title, subsect_url.text, name, href, img_url, hash]
-          #puts "    #{ name }"
+          @catalog_file << [sect_title, subsect_title, name, href, img_url, hash]
+          puts "    #{ name }"
 
           @parsed += 1
           @saved.push(hash)
@@ -99,12 +102,13 @@ class PiknikParser
   end
 
   def parse_goods(goods)
+    # puts "Start parse #{ goods }"
     href = goods.attributes['href'].to_s
     name = goods.at('img').attributes['alt'].to_s
 
     img_url = ''
     unless goods.attributes['style'].to_s.index('no_photo')
-      goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'].to_s)
+      goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'])
       img_url = goods_card.at(GOODSIMG_SEL).attributes['href'].to_s
     end
 
@@ -113,7 +117,8 @@ class PiknikParser
 
   def get_row_by_hash(hash)
     return [] unless @saved.index(hash)
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.select{|r| r[5] == hash}[0]
+    @catalog_file.pos = 0
+    @catalog_file.readlines.select{|r| r[5] == hash}[0]
   end
 
   def stat
@@ -122,8 +127,10 @@ class PiknikParser
 
     # Буфер к этому моменту не всегда записан в файл: пишем вручную
     @catalog_file.flush
+    # Смещаем каретку на начало, чтобы не открывать заново
+    @catalog_file.pos = 0
 
-    data = CSV.open(@path, 'r', {:col_sep => @sep}).readlines
+    data = @catalog_file.readlines
     catalog = Hash[data.collect{|r| [r[0], {:qnt => 0}]}]
     data.each do |r|
       catalog[r[0]][r[1]] = [] unless catalog[r[0]][r[1]]
@@ -169,7 +176,7 @@ class PiknikParser
     puts "Max file #{ max_f[:name] } for #{ max_f[:goods] }: "\
       "#{ to_kb.call(max_f[:size]) }"
 
-    if catalog.values.size == 1
+    if catalog.values.size == 1 && catalog.values[0].values.size == 1
       puts "All goods from one subcategory. Restart!"
       @parsed = 0
       self.parse
