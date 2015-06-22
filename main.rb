@@ -37,17 +37,17 @@ class PiknikParser
 
     # Чтобы не дёргать каждый раз файл, создадим массив хэшей, который будет
     # индикатором наличия объекта в каталоге.
-    @saved = @catalog_file.readlines.collect{ |r| r[5] }
+    @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    #@goods_qnt = 50
-    return    
+    @goods_qnt = 50
+    #return    
     @parsed = 0
 
     @mechanize = Mechanize.new
     @mechanize.user_agent_alias = 'Windows Chrome'
     catalog_page = @mechanize.get(PRODUCTS_URL)
     catalog_page.search(SECTBLOCK_SEL).each do |sect_block|
-      sect_title = sect_block.at(SECTLINK_SEL).attributes['title']
+      sect_title = sect_block.at(SECTLINK_SEL).attributes['title'].to_s
       #puts "Works on #{ sect_title }"
 
       sect_block.search(SUBSECT_SEL).each do |subsect_url|
@@ -73,11 +73,10 @@ class PiknikParser
 
       hash = Digest::SHA256.hexdigest(sect + subsect + name)
       next if @saved.index(hash)
-      @catalog_file << [sect, subsect, name, href, img_url, hash].map{|e| e.gsub('\t', ' ')}
+      @catalog_file << [sect, subsect, name, href, img_url, hash]
       #puts "    #{ name }"
 
       unless img_url.empty?
-        img_data = open(URI.encode(MAIN_URL + img_url)).read
         img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
         @mechanize.get(MAIN_URL + img_url).save(img_path)
       end
@@ -96,7 +95,7 @@ class PiknikParser
 
   def get_row_by_hash(hash)
     return [] unless @saved.index(hash)
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.collect{|r| if r[5] == hash}[0]
+    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.collect{|r| r[5] == hash}[0]
   end
 
   def stat
