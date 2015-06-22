@@ -95,7 +95,7 @@ class PiknikParser
 
   def get_row_by_hash(hash)
     return [] unless @saved.index(hash)
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.collect{|r| r[5] == hash}[0]
+    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.select{|r| r[5] == hash}[0]
   end
 
   def stat
