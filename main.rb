@@ -40,7 +40,7 @@ class PiknikParser
     # индикатором наличия объекта в каталоге.
     @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    @goods_qnt = 1000
+    @goods_qnt = 40
     @parsed = 0
 
     self.parse
@@ -60,16 +60,14 @@ class PiknikParser
         puts "  Parse #{ subsect_title }"
 
         subsect_goods = self.get_subsect_goods(subsect_url.attributes['href'])
-        puts subsect_goods
         subsect_goods.each do |goods|
           return if @parsed == @goods_qnt
 
-          puts "Parse #{ goods }"
           href, name, img_url = self.parse_goods(goods)
           hash = Digest::SHA256.hexdigest(sect_title + subsect_title + name)
           next if @saved.index(hash)
 
-          if img_url
+          unless img_url.empty?
             img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
             @mechanize.get(MAIN_URL + img_url).save(img_path)
           end
@@ -102,7 +100,6 @@ class PiknikParser
   end
 
   def parse_goods(goods)
-    # puts "Start parse #{ goods }"
     href = goods.attributes['href'].to_s
     name = goods.at('img').attributes['alt'].to_s
 
