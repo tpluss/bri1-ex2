@@ -40,7 +40,7 @@ class PiknikParser
     # индикатором наличия объекта в каталоге.
     @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    @goods_qnt = 40
+    @goods_qnt = 1000
     @parsed = 0
 
     self.parse
@@ -63,11 +63,14 @@ class PiknikParser
         subsect_goods.each do |goods|
           return if @parsed == @goods_qnt
 
-          href, name, img_url = self.parse_goods(goods)
+          href = goods.attributes['href'].to_s
+          name = goods.at('img').attributes['alt'].to_s
           hash = Digest::SHA256.hexdigest(sect_title + subsect_title + name)
-          next if @saved.index(hash)
+          next if @saved.index(hash)         
 
-          unless img_url.empty?
+          unless goods.attributes['style'].to_s.index('no_photo')
+            goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'])
+            img_url = goods_card.at(GOODSIMG_SEL).attributes['href'].to_s
             img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
             @mechanize.get(MAIN_URL + img_url).save(img_path)
           end
@@ -97,19 +100,6 @@ class PiknikParser
     end
 
     res
-  end
-
-  def parse_goods(goods)
-    href = goods.attributes['href'].to_s
-    name = goods.at('img').attributes['alt'].to_s
-
-    img_url = ''
-    unless goods.attributes['style'].to_s.index('no_photo')
-      goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'])
-      img_url = goods_card.at(GOODSIMG_SEL).attributes['href'].to_s
-    end
-
-    [href, name, img_url]
   end
 
   def get_row_by_hash(hash)
