@@ -146,7 +146,7 @@ class PiknikParser
     end
 
     img_list = Dir.glob(@img_dir + '/*.{jpg,jpeg,gif,png}') # с запасом
-    return if img_list.count.zero?
+    return if img_list.empty?
 
     puts "#{ img_list.count } of #{ @saved.size } "\
       "(#{ 100 * img_list.count / @saved.size }%) goods have image."
