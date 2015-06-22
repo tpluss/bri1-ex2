@@ -21,6 +21,7 @@ class PiknikParser
   SUBSECT_SEL = 'p.categories-wrap > span > a'
   GOODSCARD_SEL = 'a.product-image'
   NEXTPAGE_SEL = 'a.pager-next'
+  GOODSIMG_SEL = 'div.prettyphoto'
 
   CSV_SEP = "\t"
   CAT_PATH = './catalog.txt'
@@ -39,10 +40,14 @@ class PiknikParser
     # индикатором наличия объекта в каталоге.
     @saved = @catalog_file.readlines.collect{|r| r[5]}
 
-    @goods_qnt = 3
-    #return    
+    @goods_qnt = 50
     @parsed = 0
 
+    self.parse
+    self.stat
+  end
+
+  def parse
     @mechanize = Mechanize.new
     @mechanize.user_agent_alias = 'Windows Chrome'
     catalog_page = @mechanize.get(PRODUCTS_URL)
@@ -52,41 +57,58 @@ class PiknikParser
 
       sect_block.search(SUBSECT_SEL).each do |subsect_url|
         puts "  Parse #{ subsect_url.text }"
-        href = subsect_url.attributes['href']
-        return if self.parse_subsect(@mechanize.get(href), sect_title, subsect_url.text) == 'break'
+
+        subsect_goods = self.get_subsect_goods(subsect_url.attributes['href'])
+        subsect_goods.each do |goods|
+          return if @parsed == @goods_qnt
+
+          href, name, img_url = self.parse_goods(goods)
+          hash = Digest::SHA256.hexdigest(sect_title + subsect_url.text + name)
+          next if @saved.index(hash)
+
+          if img_url
+            img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
+            @mechanize.get(MAIN_URL + img_url).save(img_path)
+          end
+
+          @catalog_file << [sect_title, subsect_url.text, name, href, img_url, hash]
+          #puts "    #{ name }"
+
+          @parsed += 1
+          @saved.push(hash)
+        end
       end
     end
   end
 
-  def parse_subsect(subsect_page, sect, subsect)
-    subsect_page.search(GOODSCARD_SEL).each do |goods_link|
-      href = goods_link.attributes['href'].to_s
-      name = goods_link.at('img').attributes['alt'].to_s
-
-      hash = Digest::SHA256.hexdigest(sect + subsect + name)
-      next if @saved.index(hash)
-
-      img_url = ''
-      unless goods_link.attributes['style'].to_s.index('no_photo')
-        goods_card = @mechanize.get(MAIN_URL + goods_link.attributes['href'].to_s)
-        img_url = goods_card.at('div.prettyphoto').attributes['href'].to_s
-        img_path = "#{ @img_dir }/#{ hash }#{ File.extname(img_url) }"
-        @mechanize.get(MAIN_URL + img_url).save(img_path)
-      end
-
-      @catalog_file << [sect, subsect, name, href, img_url, hash]
-      #puts "    #{ name }"
-
-      @parsed += 1
-      @saved.push(hash)
-      return 'break' unless @parsed < @goods_qnt
-    end
+  # Собирает все ссылки на товары по категории
+  # ??? Такой подход не очень нравится, так как придётся обойти все страницы
+  # раздела, а потом считать хэш: товары в каталоге могут дублироваться.
+  def get_subsect_goods(subsect_href)
+    subsect_page = @mechanize.get(subsect_href)
+    res = subsect_page.search(GOODSCARD_SEL)
 
     next_link = subsect_page.at(NEXTPAGE_SEL)
     if next_link
-      puts "  Next page #{ MAIN_URL + next_link.attributes['href'] }"
-      parse_subsect(@mechanize.get(MAIN_URL + next_link.attributes['href']), sect, subsect)
+      href = next_link.attributes['href']
+      #puts "  Next page #{ MAIN_URL + href }"
+      res += self.get_subsect_goods(MAIN_URL + href)
     end
+
+    res
+  end
+
+  def parse_goods(goods)
+    href = goods.attributes['href'].to_s
+    name = goods.at('img').attributes['alt'].to_s
+
+    img_url = ''
+    unless goods.attributes['style'].to_s.index('no_photo')
+      goods_card = @mechanize.get(MAIN_URL + goods.attributes['href'].to_s)
+      img_url = goods_card.at(GOODSIMG_SEL).attributes['href'].to_s
+    end
+
+    [href, name, img_url]
   end
 
   def get_row_by_hash(hash)
@@ -98,9 +120,9 @@ class PiknikParser
     puts "Catalog contains #{ @saved.size } goods."
     return if @saved.size.zero?
 
-    # FIX: разобраться с открытием файлов: файл конец файла не совпадает:
-    # приходится вручную закрывать файл для записи
-    @catalog_file.close
+    # Буфер к этому моменту не всегда записан в файл: пишем вручную
+    @catalog_file.flush
+
     data = CSV.open(@path, 'r', {:col_sep => @sep}).readlines
     catalog = Hash[data.collect{|r| [r[0], {:qnt => 0}]}]
     data.each do |r|
@@ -146,8 +168,13 @@ class PiknikParser
       "#{ to_kb.call(min_f[:size]) }"
     puts "Max file #{ max_f[:name] } for #{ max_f[:goods] }: "\
       "#{ to_kb.call(max_f[:size]) }"
+
+    if catalog.values.size == 1
+      puts "All goods from one subcategory. Restart!"
+      @parsed = 0
+      self.parse
+    end
   end
 end
 
 cp = PiknikParser.new
-cp.stat
