@@ -59,15 +59,15 @@ class PiknikParser
         return if self.parse_subsect(@mechanize.get(href), sect_title, subsect_url.text) == 'break'
       end
     end
+
+    self.stat
   end
 
   def parse_subsect(subsect_page, sect, subsect)
     subsect_page.search(GOODSCARD_SEL).each do |goods_link|
       href = goods_link.attributes['href'].to_s
       name = goods_link.at('img').attributes['alt'].to_s
-      # Зато без регэкспов :)
       # FIX: переход в карточку товара с последующим дёрганьем по css-селектору.
-      # Товары с no_photo можно пропускать?
       img_url = goods_link.attributes['style'].value.sub('background: url(', '')\
         .sub(') no-repeat center center', '').sub('/images/no_photo_2.png', '')
 
@@ -101,16 +101,17 @@ class PiknikParser
   def stat
     puts "Catalog contains #{ @saved.size } goods."
     return if @saved.size.zero?
-
-    csv = CSV.open(@path, 'r', {:col_sep => @sep})
-    data = csv.readlines
+    
+    # FIX: разобраться с открытием файлов: файл конец файла не совпадает:
+    # приходится вручную закрывать файл для записи
+    @catalog_file.close
+    data = CSV.open(@path, 'r', {:col_sep => @sep}).readlines
     catalog = Hash[data.collect{|r| [r[0], {:qnt => 0}]}]
     data.each do |r|
       catalog[r[0]][r[1]] = [] unless catalog[r[0]][r[1]]
       catalog[r[0]][r[1]].push(r.drop(2))
       catalog[r[0]][:qnt] += 1
     end
-    csv.close
 
     catalog.each do |cat, cat_data|
         puts "#{ cat }: #{ cat_data.delete(:qnt) }"
