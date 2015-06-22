@@ -81,8 +81,8 @@ class PiknikParser
         @mechanize.get(MAIN_URL + img_url).save(img_path)
       end
 
-      @parsed +=1
-      @saved.push(hash.to_s)
+      @parsed += 1
+      @saved.push(hash)
       return 'break' unless @parsed < @goods_qnt
     end
 
@@ -101,26 +101,22 @@ class PiknikParser
   def stat
     puts "Catalog contains #{ @saved.size } goods."
     return if @saved.size.zero?
-    cur_sect, cur_subsect = nil, nil
-    sect_qnt, subsect_qnt = 0, 0
-    # Адский обход. Надо предварительно знать количество, а выводить потом.
-    # Нужен алгоритм формирования хэша.
-    CSV.open(@path, 'r', {:col_sep => @sep}).readlines.each do |r|
-      unless cur_subsect == r[1] #or last line
-        puts " Total: #{ subsect_qnt } (#{ '%.2f' %(100.to_f * subsect_qnt/sect_qnt) }%)." unless cur_subsect.nil?
-        cur_subsect = r[1]
-        puts "  #{ r[1] }"
-        subsect_qnt = 0
-        unless cur_sect == r[0] #or last line
-          puts "Total: #{ sect_qnt }" unless cur_sect.nil?
-          cur_sect = r[0]
-          puts r[0]
-          sect_qnt = 0
+
+    csv = CSV.open(@path, 'r', {:col_sep => @sep})
+    data = csv.readlines
+    catalog = Hash[data.collect{|r| [r[0], {:qnt => 0}]}]
+    data.each do |r|
+      catalog[r[0]][r[1]] = [] unless catalog[r[0]][r[1]]
+      catalog[r[0]][r[1]].push(r.drop(2))
+      catalog[r[0]][:qnt] += 1
+    end
+    csv.close
+
+    catalog.each do |cat, cat_data|
+        puts "#{ cat }: #{ cat_data.delete(:qnt) }"
+        cat_data.each do |subcat, subcat_data|
+            puts "  #{ subcat }: #{ subcat_data.size }"
         end
-      end
-      sect_qnt +=1
-      subsect_qnt +=1
-      puts " -> #{ r[2] }"
     end
 
     img_list = Dir.glob(@img_dir + '/*.{jpg,jpeg,gif,png}') # с запасом
